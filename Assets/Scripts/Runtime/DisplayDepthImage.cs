@@ -1,6 +1,8 @@
+using System;
+using System.Collections;
 using System.Text;
+using UnityEngine.Assertions;
 using UnityEngine.UI;
-using UnityEngine.XR.ARFoundation;
 using UnityEngine.XR.ARSubsystems;
 
 namespace UnityEngine.XR.ARFoundation.Samples
@@ -65,7 +67,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
         /// <summary>
         /// The mode indicating which texture to display.
         /// </summary>
-        DisplayMode m_DisplayMode = DisplayMode.EnvironmentDepthRaw;
+        DisplayMode m_DisplayMode = DisplayMode.EnvironmentDepthSmooth;
 
         /// <summary>
         /// The display rotation matrix for the shader.
@@ -174,14 +176,27 @@ namespace UnityEngine.XR.ARFoundation.Samples
             set => m_MaxHumanDistance = value;
         }
 
+        public float DepthDistance
+        {
+            get => depthDistance;
+            set => depthDistance = value;
+        }
+
+        public float DepthDistanceCentimeters
+        {
+            get => depthDistance * 100f; // Convert meters to centimeters
+        }
+
+        float depthDistance = 0;
+
         [SerializeField]
         float m_MaxHumanDistance = 3.0f;
 
         void Awake()
         {
 #if UNITY_ANDROID
-            k_AndroidFlipYMatrix[1,1] = -1.0f;
-            k_AndroidFlipYMatrix[2,1] = 1.0f;
+            k_AndroidFlipYMatrix[1, 1] = -1.0f;
+            k_AndroidFlipYMatrix[2, 1] = 1.0f;
 #endif // UNITY_ANDROID
         }
 
@@ -195,6 +210,8 @@ namespace UnityEngine.XR.ARFoundation.Samples
             // When enabled, get the current screen orientation, and update the raw image UI.
             m_CurrentScreenOrientation = Screen.orientation;
             UpdateRawImage();
+
+            StartCoroutine(RetrieveDepthDistance());
         }
 
         void OnDisable()
@@ -203,6 +220,8 @@ namespace UnityEngine.XR.ARFoundation.Samples
             m_DisplayRotationMatrix = Matrix4x4.identity;
             if (m_CameraManager != null)
                 m_CameraManager.frameReceived -= OnCameraFrameEventReceived;
+
+            StopAllCoroutines();
         }
 
         void Update()
@@ -216,61 +235,61 @@ namespace UnityEngine.XR.ARFoundation.Samples
             {
                 case DisplayMode.HumanDepth:
                 case DisplayMode.HumanStencil:
-                {
-                    if (descriptor != null &&
-                        (descriptor.humanSegmentationDepthImageSupported == Supported.Supported ||
-                        descriptor.humanSegmentationStencilImageSupported == Supported.Supported))
                     {
-                        break;
-                    }
+                        if (descriptor != null &&
+                            (descriptor.humanSegmentationDepthImageSupported == Supported.Supported ||
+                            descriptor.humanSegmentationStencilImageSupported == Supported.Supported))
+                        {
+                            break;
+                        }
 
-                    if (descriptor != null &&
-                        (descriptor.humanSegmentationStencilImageSupported == Supported.Unknown ||
-                         descriptor.humanSegmentationDepthImageSupported == Supported.Unknown))
-                    {
-                        LogText("Determining human segmentation support...");
-                    }
-                    else
-                    {
-                        LogText("Human segmentation is not supported on this device.");
-                    }
+                        if (descriptor != null &&
+                            (descriptor.humanSegmentationStencilImageSupported == Supported.Unknown ||
+                             descriptor.humanSegmentationDepthImageSupported == Supported.Unknown))
+                        {
+                            LogText("Determining human segmentation support...");
+                        }
+                        else
+                        {
+                            LogText("Human segmentation is not supported on this device.");
+                        }
 
-                    m_RawImage.texture = null;
-                    if (!Mathf.Approximately(m_TextureAspectRatio, k_DefaultTextureAspectRadio))
-                    {
-                        m_TextureAspectRatio = k_DefaultTextureAspectRadio;
-                        UpdateRawImage();
-                    }
+                        m_RawImage.texture = null;
+                        if (!Mathf.Approximately(m_TextureAspectRatio, k_DefaultTextureAspectRadio))
+                        {
+                            m_TextureAspectRatio = k_DefaultTextureAspectRadio;
+                            UpdateRawImage();
+                        }
 
-                    return;
-                }
+                        return;
+                    }
                 case DisplayMode.EnvironmentDepthRaw:
                 case DisplayMode.EnvironmentDepthSmooth:
                 default:
-                {
-                    if (descriptor == null || descriptor.environmentDepthImageSupported == Supported.Unsupported)
                     {
-                        LogText("Environment depth is not supported on this device.");
-                    }
-                    else if (descriptor.environmentDepthImageSupported == Supported.Unknown)
-                    {
-                        LogText("Determining environment depth support...");
-                    }
-                    else if (descriptor.environmentDepthImageSupported == Supported.Supported)
-                    {
-                        m_OcclusionManager.environmentDepthTemporalSmoothingRequested = m_DisplayMode == DisplayMode.EnvironmentDepthSmooth;
-                        break;
-                    }
+                        if (descriptor == null || descriptor.environmentDepthImageSupported == Supported.Unsupported)
+                        {
+                            LogText("Environment depth is not supported on this device.");
+                        }
+                        else if (descriptor.environmentDepthImageSupported == Supported.Unknown)
+                        {
+                            LogText("Determining environment depth support...");
+                        }
+                        else if (descriptor.environmentDepthImageSupported == Supported.Supported)
+                        {
+                            m_OcclusionManager.environmentDepthTemporalSmoothingRequested = m_DisplayMode == DisplayMode.EnvironmentDepthSmooth;
+                            break;
+                        }
 
-                    m_RawImage.texture = null;
-                    if (!Mathf.Approximately(m_TextureAspectRatio, k_DefaultTextureAspectRadio))
-                    {
-                        m_TextureAspectRatio = k_DefaultTextureAspectRadio;
-                        UpdateRawImage();
-                    }
+                        m_RawImage.texture = null;
+                        if (!Mathf.Approximately(m_TextureAspectRatio, k_DefaultTextureAspectRadio))
+                        {
+                            m_TextureAspectRatio = k_DefaultTextureAspectRadio;
+                            UpdateRawImage();
+                        }
 
-                    return;
-                }
+                        return;
+                    }
             }
 
             // Get all of the occlusion textures.
@@ -283,6 +302,7 @@ namespace UnityEngine.XR.ARFoundation.Samples
             BuildTextureInfo(m_StringBuilder, "stencil", humanStencil);
             BuildTextureInfo(m_StringBuilder, "depth", humanDepth);
             BuildTextureInfo(m_StringBuilder, "env", envDepth);
+            RetrieveDepthDistance();
 
             LogText(m_StringBuilder.ToString());
 
@@ -344,12 +364,12 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 affineBasisX = affineBasisX.normalized;
                 affineBasisY = affineBasisY.normalized;
                 m_DisplayRotationMatrix = Matrix4x4.identity;
-                m_DisplayRotationMatrix[0,0] = affineBasisX.x;
-                m_DisplayRotationMatrix[0,1] = affineBasisY.x;
-                m_DisplayRotationMatrix[1,0] = affineBasisX.y;
-                m_DisplayRotationMatrix[1,1] = affineBasisY.y;
-                m_DisplayRotationMatrix[2,0] = Mathf.Round(affineTranslation.x);
-                m_DisplayRotationMatrix[2,1] = Mathf.Round(affineTranslation.y);
+                m_DisplayRotationMatrix[0, 0] = affineBasisX.x;
+                m_DisplayRotationMatrix[0, 1] = affineBasisY.x;
+                m_DisplayRotationMatrix[1, 0] = affineBasisX.y;
+                m_DisplayRotationMatrix[1, 1] = affineBasisY.y;
+                m_DisplayRotationMatrix[2, 0] = Mathf.Round(affineTranslation.x);
+                m_DisplayRotationMatrix[2, 1] = Mathf.Round(affineTranslation.y);
 
                 // Set the matrix to the raw image material.
                 m_RawImage.material.SetMatrix(k_DisplayRotationPerFrameId, m_DisplayRotationMatrix);
@@ -375,9 +395,68 @@ namespace UnityEngine.XR.ARFoundation.Samples
                 stringBuilder.AppendLine($"   width  : {texture.width}");
                 stringBuilder.AppendLine($"   height : {texture.height}");
                 stringBuilder.AppendLine($"   mipmap : {texture.mipmapCount}");
+                stringBuilder.AppendLine($"   distance (meters): {DepthDistance:F2}");
+                stringBuilder.AppendLine($"   distance (centimeters): {DepthDistanceCentimeters:F1}");
+
+                // Add color mapping info
+                if (texture == m_OcclusionManager.environmentDepthTexture)
+                {
+                    stringBuilder.AppendLine("\n" + GetDepthColorMapping());
+                }
             }
         }
 
+
+        IEnumerator RetrieveDepthDistance()
+        {
+            while (true)
+            {
+                try
+                {
+                    if (occlusionManager != null && occlusionManager.TryAcquireEnvironmentDepthCpuImage(out var cpuImage))
+                    {
+                        using (cpuImage)
+                        {
+                            if (cpuImage.valid)
+                            {
+                                Assert.IsTrue(cpuImage.planeCount == 1);
+                                var plane = cpuImage.GetPlane(0);
+                                var dataLength = plane.data.Length;
+                                var pixelStride = plane.pixelStride;
+                                var rowStride = plane.rowStride;
+
+                                var centerRowIndex = dataLength / rowStride / 2;
+                                var centerPixelIndex = rowStride / pixelStride / 2;
+                                var centerPixelData = plane.data.GetSubArray(centerRowIndex * rowStride + centerPixelIndex * pixelStride, pixelStride);
+                                DepthDistance = convertPixelDataToDistanceInMeters(centerPixelData.ToArray(), cpuImage.format);
+
+                                // Calculate normalized depth value (0 to 1)
+                                float normalizedDepth = Mathf.Clamp01(DepthDistance / m_MaxEnvironmentDistance);
+
+                                // Determine color range (reversed from before)
+                                // string colorRange = "Unknown";
+                                // if (normalizedDepth < 0.2f) colorRange = "Blue (Closest)";
+                                // else if (normalizedDepth < 0.4f) colorRange = "Cyan";
+                                // else if (normalizedDepth < 0.6f) colorRange = "Green";
+                                // else if (normalizedDepth < 0.8f) colorRange = "Yellow";
+                                // else colorRange = "Red (Farthest)";
+
+                                // Debug.Log($"Depth: {DepthDistance:F2}m ({DepthDistanceCentimeters:F1}cm)" +
+                                //         $"\nNormalized depth: {normalizedDepth:F2}" +
+                                //         $"\nColor range: {colorRange}" +
+                                //         $"\nPercentage of max: {(normalizedDepth * 100):F1}%");
+                            }
+                        }
+                    }
+                }
+                catch (Exception e)
+                {
+                    Debug.LogError($"Error retrieving depth: {e.Message}");
+                }
+
+                yield return new WaitForSeconds(0.1f);
+            }
+        }
         /// <summary>
         /// Log the given text to the screen if the image info UI is set. Otherwise, log the string to debug.
         /// </summary>
@@ -463,5 +542,34 @@ namespace UnityEngine.XR.ARFoundation.Samples
             // Update the raw image following the mode change.
             UpdateRawImage();
         }
+
+        public float convertPixelDataToDistanceInMeters(byte[] data, XRCpuImage.Format format)
+        {
+            switch (format)
+            {
+                case XRCpuImage.Format.DepthUint16:
+                    return BitConverter.ToUInt16(data, 0) / 1000f;
+                case XRCpuImage.Format.DepthFloat32:
+                    return BitConverter.ToSingle(data, 0);
+                default:
+                    throw new Exception($"Format not supported: {format}");
+            }
+        }
+
+        // Add this method to your DisplayDepthImage class to get color mapping for depth values
+        private string GetDepthColorMapping()
+        {
+            float maxDist = m_MaxEnvironmentDistance; // 0.7m in your case
+            StringBuilder mapping = new StringBuilder();
+            mapping.AppendLine("Depth Color Mapping (max distance = 0.7m):");
+            mapping.AppendLine("Blue   -> 0.0m to 0.14m (closest)");
+            mapping.AppendLine("Cyan   -> 0.14m to 0.28m");
+            mapping.AppendLine("Green  -> 0.28m to 0.42m");
+            mapping.AppendLine("Yellow -> 0.42m to 0.56m");
+            mapping.AppendLine("Red    -> 0.56m to 0.7m (farthest)");
+
+            return mapping.ToString();
+        }
+
     }
 }
