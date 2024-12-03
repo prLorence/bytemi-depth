@@ -19,6 +19,13 @@ public class ServerManager : MonoBehaviour
     // private string serverUri = "http://localhost:5000"; // Default URI
     private string serverUri = "http://192.168.68.111:5000"; // Default URI
 
+    public struct UploadParameters
+    {
+        public string rawFilePath;
+        public string metaRawFilePath;
+        public string rgbFilePath;
+        public string metaRgbFilePath;
+    }
     private void OnEnable()
     {
         settingsPanel.SetActive(false);
@@ -77,21 +84,29 @@ public class ServerManager : MonoBehaviour
         HideSettingsPanel();
     }
 
-    public async Task<bool> UploadDepthData(string rawFilePath, string metaFilePath)
+    public async Task<bool> UploadDepthData(UploadParameters request)
     {
         try
         {
             using (var multipartContent = new MultipartFormDataContent())
             {
                 // Add raw file
-                byte[] rawFileBytes = File.ReadAllBytes(rawFilePath);
+                byte[] rawFileBytes = File.ReadAllBytes(request.rawFilePath);
                 var rawContent = new ByteArrayContent(rawFileBytes);
-                multipartContent.Add(rawContent, "raw", Path.GetFileName(rawFilePath));
+                multipartContent.Add(rawContent, "raw", Path.GetFileName(request.rawFilePath));
 
                 // Add meta file
-                byte[] metaFileBytes = File.ReadAllBytes(metaFilePath);
-                var metaContent = new ByteArrayContent(metaFileBytes);
-                multipartContent.Add(metaContent, "meta", Path.GetFileName(metaFilePath));
+                byte[] metaRawFileBytes = File.ReadAllBytes(request.metaRawFilePath);
+                var metaRawContent = new ByteArrayContent(metaRawFileBytes);
+                multipartContent.Add(metaRawContent, "metadata-raw", Path.GetFileName(request.metaRawFilePath));
+
+                byte[] rgbFileBytes = File.ReadAllBytes(request.rawFilePath);
+                var rgbContent = new ByteArrayContent(rawFileBytes);
+                multipartContent.Add(rgbContent, "raw", Path.GetFileName(request.rawFilePath));
+
+                byte[] metaRgbFileBytes = File.ReadAllBytes(request.metaRawFilePath);
+                var metaRgbContent = new ByteArrayContent(metaRawFileBytes);
+                multipartContent.Add(metaRgbContent, "metadata-rgb", Path.GetFileName(request.metaRawFilePath));
 
                 // Send request
                 var response = await httpClient.PostAsync($"{serverUri}/upload", multipartContent);

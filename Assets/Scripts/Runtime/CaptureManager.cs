@@ -25,9 +25,12 @@ public class CaptureManager : MonoBehaviour
         {
             // Get the latest captured files
             string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string baseFilename = Path.Combine(Application.persistentDataPath, $"depth_frame_{timestamp}");
-            string rawFilePath = $"{baseFilename}.raw";
-            string metaFilePath = $"{baseFilename}.meta";
+            string rawBaseFileName = Path.Combine(Application.persistentDataPath, $"depth_frame_{timestamp}");
+            string rgbBaseFileName = Path.Combine(Application.persistentDataPath, $"rgb_frame_{timestamp}");
+            string rawFilePath = $"{rawBaseFileName}.raw";
+            string metaRawFilePath = $"{rawBaseFileName}.meta";
+            string rgbFilePath = $"{rgbBaseFileName}.png";
+            string metaRgbFilePath = $"{rgbBaseFileName}.meta";
 
             // Capture depth and RGB
             depthExporter.CaptureDepthFrame();
@@ -35,9 +38,16 @@ public class CaptureManager : MonoBehaviour
 
             // Small delay to ensure files are written
             await Task.Delay(100);
+            ServerManager.UploadParameters uploadParameters = new()
+            {
+                rawFilePath = rawFilePath,
+                metaRawFilePath = metaRawFilePath,
+                rgbFilePath = rgbBaseFileName,
+                metaRgbFilePath = metaRgbFilePath,
+            };
 
             // Upload to server
-            bool success = await serverManager.UploadDepthData(rawFilePath, metaFilePath);
+            bool success = await serverManager.UploadDepthData(uploadParameters);
             if (success)
             {
                 Debug.Log("Upload successful!");
