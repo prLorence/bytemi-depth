@@ -11,51 +11,74 @@ public class CaptureManager : MonoBehaviour
     [SerializeField] private ServerManager serverManager;
     [SerializeField] private Button captureButton;
 
+    private bool isCapturing = false;
+
     private void Start()
     {
         if (captureButton != null)
         {
-            captureButton.onClick.AddListener(CaptureAndUpload);
+            captureButton.onClick.AddListener(CaptureFrames);
         }
+
+        ValidateComponents();
     }
 
-    private async void CaptureAndUpload()
+    private void ValidateComponents()
     {
+        if (depthExporter == null)
+            Debug.LogError("DepthImageExporter not assigned!");
+        if (rgbCapture == null)
+            Debug.LogError("RGBImageCapture not assigned!");
+    }
+
+    private async void CaptureFrames()
+    {
+        if (isCapturing)
+        {
+            Debug.Log("Already capturing, please wait...");
+            return;
+        }
+
         try
         {
-            // Get the latest captured files
-            string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-            string rawBaseFileName = Path.Combine(Application.persistentDataPath, $"depth_frame_{timestamp}");
-            string rgbBaseFileName = Path.Combine(Application.persistentDataPath, $"rgb_frame_{timestamp}");
-            string rawFilePath = $"{rawBaseFileName}.raw";
-            string metaRawFilePath = $"{rawBaseFileName}.meta";
-            string rgbFilePath = $"{rgbBaseFileName}.png";
-            string metaRgbFilePath = $"{rgbBaseFileName}.meta";
+            isCapturing = true;
+            captureButton.interactable = false;
 
-            // Capture depth and RGB
+            // Create parameters with consistent timestamp
+            ServerManager.UploadParameters uploadParameters = new()
+            {
+                timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss"),
+                basePath = Application.persistentDataPath,
+                depthPrefix = "depth_frame_",
+                rgbPrefix = "rgb_frame_"
+            };
+
+            Debug.Log($"Starting capture sequence with timestamp: {uploadParameters.timestamp}");
+
+            // Ensure the directory exists
+            Directory.CreateDirectory(uploadParameters.basePath);
+
+            // Capture both frames
             depthExporter.CaptureDepthFrame();
             rgbCapture.CaptureRGBFrame();
 
-            // Small delay to ensure files are written
-            await Task.Delay(100);
-            ServerManager.UploadParameters uploadParameters = new()
-            {
-                rawFilePath = rawFilePath,
-                metaRawFilePath = metaRawFilePath,
-                rgbFilePath = rgbBaseFileName,
-                metaRgbFilePath = metaRgbFilePath,
-            };
+            // Add small delay to ensure files are written
+            await Task.Delay(1000);
 
-            // Upload to server
-            bool success = await serverManager.UploadDepthData(uploadParameters);
-            if (success)
+            // Let server manager handle the upload
+            if (serverManager != null)
             {
-                Debug.Log("Upload successful!");
+                await serverManager.UploadDepthData(uploadParameters);
             }
         }
         catch (Exception e)
         {
-            Debug.LogError($"Error in capture and upload process: {e.Message}");
+            Debug.LogError($"Error during capture: {e.Message}");
+        }
+        finally
+        {
+            isCapturing = false;
+            captureButton.interactable = true;
         }
     }
 }

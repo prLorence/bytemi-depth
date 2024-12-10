@@ -14,18 +14,21 @@ public class DepthImageExporter : MonoBehaviour
     [SerializeField]
     private DisplayDepthImage displayDepthImage;
 
+    private bool isSaving = false;
+
     void Awake()
     {
         // Auto-assign if not set in inspector
         if (occlusionManager == null)
-            occlusionManager = GetComponent<AROcclusionManager>();
+            occlusionManager = FindAnyObjectByType<AROcclusionManager>();
+
+        if (occlusionManager == null)
+            Debug.LogError("AROcclusionManager not found!");
 
         if (displayDepthImage == null)
-            displayDepthImage = GetComponent<DisplayDepthImage>();
+            displayDepthImage = FindAnyObjectByType<DisplayDepthImage>();
     }
 
-
-    // Structure to hold depth frame metadata
     [Serializable]
     public struct DepthFrameMetadata
     {
@@ -33,73 +36,158 @@ public class DepthImageExporter : MonoBehaviour
         public int height;
         public XRCpuImage.Format format;
         public double timestamp;
-        // Add depth statistics
         public float centerPixelDepth;
         public float minDepth;
         public float maxDepth;
     }
 
-    public void CaptureDepthFrame()
+    public async void CaptureDepthFrame()
     {
-        string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
-        string baseFilename = Path.Combine(Application.persistentDataPath, $"depth_frame_{timestamp}");
-        if (occlusionManager.TryAcquireEnvironmentDepthCpuImage(out XRCpuImage image))
+        if (isSaving)
         {
+            Debug.Log("Already saving a depth frame, please wait...");
+            return;
+        }
+
+        if (occlusionManager == null)
+        {
+            Debug.LogError("Cannot capture depth frame - AROcclusionManager is null");
+            return;
+        }
+
+        try
+        {
+            isSaving = true;
+            Debug.Log("Starting depth capture...");
+
+            if (!occlusionManager.TryAcquireEnvironmentDepthCpuImage(out XRCpuImage image))
+            {
+                Debug.LogError("Failed to acquire depth image");
+                return;
+            }
+
             using (image)
             {
+                string timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss");
+                string baseFilename = Path.Combine(Application.persistentDataPath, $"depth_frame_{timestamp}");
+                string rawPath = $"{baseFilename}.raw";
+                string metaPath = $"{baseFilename}.meta";
+
+                Debug.Log($"Preparing to save depth data to: {rawPath}");
+
+                // Ensure directory exists
+                string directory = Path.GetDirectoryName(rawPath);
+                if (!Directory.Exists(directory))
+                {
+                    Directory.CreateDirectory(directory);
+                }
+
                 try
                 {
-                    SaveDepthData(image, $"{baseFilename}.raw");
+                    // Save raw depth data
+                    SaveDepthData(image, rawPath);
 
                     // Save metadata
-                    SaveMetadata(image, $"{baseFilename}.meta");
+                    SaveMetadata(image, metaPath);
 
-                    Debug.Log($"Depth frame saved: {baseFilename}");
+                    // Wait for files to be written
+                    int attempts = 0;
+                    while ((!File.Exists(rawPath) || !File.Exists(metaPath)) && attempts < 10)
+                    {
+                        await System.Threading.Tasks.Task.Delay(100);
+                        attempts++;
+                    }
+
+                    if (!File.Exists(rawPath))
+                    {
+                        Debug.LogError($"Depth raw file was not created: {rawPath}");
+                    }
+                    if (!File.Exists(metaPath))
+                    {
+                        Debug.LogError($"Depth meta file was not created: {metaPath}");
+                    }
+
+                    Debug.Log($"Successfully saved depth frame to: {rawPath}");
                 }
                 catch (Exception e)
                 {
-                    Debug.LogError($"Failed to save depth frame: {e.Message}");
+                    Debug.LogError($"Error saving depth data: {e.Message}\nStack trace: {e.StackTrace}");
+                    throw;
                 }
             }
         }
-
-        LoadAndAnalyzeDepthFrame(timestamp);
+        catch (Exception e)
+        {
+            Debug.LogError($"Error in depth capture: {e.Message}\nStack trace: {e.StackTrace}");
+        }
+        finally
+        {
+            isSaving = false;
+        }
     }
 
     private void SaveDepthData(XRCpuImage image, string filename)
     {
         var plane = image.GetPlane(0);
+        Debug.Log($"Saving depth data with size: {plane.data.Length} bytes");
 
         using (FileStream fs = new FileStream(filename, FileMode.Create))
         using (BinaryWriter writer = new BinaryWriter(fs))
         {
-            // Write raw depth data
             byte[] buffer = new byte[plane.data.Length];
             plane.data.CopyTo(buffer);
             writer.Write(buffer);
         }
+
+        Debug.Log($"Depth data saved to: {filename}");
     }
 
     private void SaveMetadata(XRCpuImage image, string filename)
     {
-        // Calculate depth statistics
-        var plane = image.GetPlane(0);
-        var dataLength = plane.data.Length;
-        var pixelStride = plane.pixelStride;
-        var rowStride = plane.rowStride;
+        try
+        {
+            var plane = image.GetPlane(0);
+            var dataLength = plane.data.Length;
+            var pixelStride = plane.pixelStride;
+            var rowStride = plane.rowStride;
 
-        // Get center pixel depth
-        var centerRowIndex = dataLength / rowStride / 2;
-        var centerPixelIndex = rowStride / pixelStride / 2;
-        var centerPixelData = plane.data.GetSubArray(centerRowIndex * rowStride + centerPixelIndex * pixelStride, pixelStride);
-        float centerDepth = displayDepthImage.convertPixelDataToDistanceInMeters(centerPixelData.ToArray(), image.format);
+            // Calculate center pixel depth
+            var centerRowIndex = dataLength / rowStride / 2;
+            var centerPixelIndex = rowStride / pixelStride / 2;
+            var centerPixelData = plane.data.GetSubArray(centerRowIndex * rowStride + centerPixelIndex * pixelStride, pixelStride);
+            float centerDepth = displayDepthImage != null ?
+                displayDepthImage.convertPixelDataToDistanceInMeters(centerPixelData.ToArray(), image.format) : 0;
 
-        // Calculate min/max depths and sample grid
-        float minDepth = float.MaxValue;
-        float maxDepth = float.MinValue;
+            // Calculate min/max depths
+            float minDepth = float.MaxValue;
+            float maxDepth = float.MinValue;
+            var gridDepths = CalculateGridDepths(image, plane, ref minDepth, ref maxDepth);
+
+            var metadata = new DepthFrameMetadata
+            {
+                width = image.width,
+                height = image.height,
+                format = image.format,
+                timestamp = image.timestamp,
+                centerPixelDepth = centerDepth,
+                minDepth = minDepth,
+                maxDepth = maxDepth
+            };
+
+            string jsonMetadata = JsonUtility.ToJson(metadata, true);
+            File.WriteAllText(filename, jsonMetadata);
+            Debug.Log($"Depth metadata saved to: {filename}");
+        }
+        catch (Exception e)
+        {
+            Debug.LogError($"Error saving depth metadata: {e.Message}");
+            throw;
+        }
+    }
+
+    private string CalculateGridDepths(XRCpuImage image, XRCpuImage.Plane plane, ref float minDepth, ref float maxDepth)
+    {
         StringBuilder gridDepths = new StringBuilder();
-
-        // Get 5x5 grid from center
         int gridSize = 5;
         int startX = (image.width / 2) - (gridSize / 2);
         int startY = (image.height / 2) - (gridSize / 2);
@@ -108,9 +196,10 @@ public class DepthImageExporter : MonoBehaviour
         {
             for (int x = 0; x < gridSize; x++)
             {
-                int index = (startY + y) * rowStride + (startX + x) * pixelStride;
-                var pixelData = plane.data.GetSubArray(index, pixelStride).ToArray();
-                float depth = displayDepthImage.convertPixelDataToDistanceInMeters(pixelData, image.format);
+                int index = (startY + y) * plane.rowStride + (startX + x) * plane.pixelStride;
+                var pixelData = plane.data.GetSubArray(index, plane.pixelStride).ToArray();
+                float depth = displayDepthImage != null ?
+                    displayDepthImage.convertPixelDataToDistanceInMeters(pixelData, image.format) : 0;
 
                 gridDepths.Append($"{depth:F3}");
                 if (x < gridSize - 1) gridDepths.Append(" ");
@@ -124,111 +213,6 @@ public class DepthImageExporter : MonoBehaviour
             if (y < gridSize - 1) gridDepths.AppendLine();
         }
 
-        var metadata = new DepthFrameMetadata
-        {
-            width = image.width,
-            height = image.height,
-            format = image.format,
-            timestamp = image.timestamp,
-            centerPixelDepth = centerDepth,
-            minDepth = minDepth,
-            maxDepth = maxDepth,
-        };
-
-        string jsonMetadata = JsonUtility.ToJson(metadata, true);
-        File.WriteAllText(filename, jsonMetadata);
-    }
-
-
-    // Utility method to read back the depth data
-    public static float[,] LoadDepthFrame(string rawFilename, string metaFilename)
-    {
-        // Read metadata
-        string jsonMetadata = File.ReadAllText(metaFilename);
-        DepthFrameMetadata metadata = JsonUtility.FromJson<DepthFrameMetadata>(jsonMetadata);
-
-        // Read raw data
-        byte[] rawData = File.ReadAllBytes(rawFilename);
-        float[,] depthMap = new float[metadata.width, metadata.height];
-
-        // Convert based on format
-        for (int y = 0; y < metadata.height; y++)
-        {
-            for (int x = 0; x < metadata.width; x++)
-            {
-                int index = (y * metadata.width + x) * (metadata.format == XRCpuImage.Format.DepthFloat32 ? 4 : 2);
-
-                if (metadata.format == XRCpuImage.Format.DepthFloat32)
-                {
-                    depthMap[x, y] = BitConverter.ToSingle(rawData, index);
-                }
-                else if (metadata.format == XRCpuImage.Format.DepthUint16)
-                {
-                    depthMap[x, y] = BitConverter.ToUInt16(rawData, index) / 1000f;
-                }
-            }
-        }
-
-        return depthMap;
-    }
-
-    public void LoadAndAnalyzeDepthFrame(string timestamp)
-    {
-        string basePath = Application.persistentDataPath;
-        string rawFile = Path.Combine(basePath, $"depth_frame_{timestamp}.raw");
-        string metaFile = Path.Combine(basePath, $"depth_frame_{timestamp}.meta");
-
-        if (File.Exists(rawFile) && File.Exists(metaFile))
-        {
-            float[,] depthMap = DepthImageExporter.LoadDepthFrame(rawFile, metaFile);
-
-            // Get dimensions
-            int width = depthMap.GetLength(0);   // Typically 160 for ARCore
-            int height = depthMap.GetLength(1);  // Typically 90 for ARCore
-
-            // Print some example values
-            StringBuilder sb = new StringBuilder();
-            sb.AppendLine($"Depth Map Size: {width}x{height}");
-
-            // Print center pixel depth
-            float centerDepth = depthMap[width / 2, height / 2];
-            sb.AppendLine($"Center pixel depth: {centerDepth:F3}m");
-
-            // Print min/max depths
-            float minDepth = float.MaxValue;
-            float maxDepth = float.MinValue;
-            for (int y = 0; y < height; y++)
-            {
-                for (int x = 0; x < width; x++)
-                {
-                    float depth = depthMap[x, y];
-                    if (depth > 0) // Ignore invalid/zero depths
-                    {
-                        minDepth = Mathf.Min(minDepth, depth);
-                        maxDepth = Mathf.Max(maxDepth, depth);
-                    }
-                }
-            }
-            sb.AppendLine($"Min depth: {minDepth:F3}m");
-            sb.AppendLine($"Max depth: {maxDepth:F3}m");
-
-            // Print a small sample grid (e.g., 5x5 from center)
-            sb.AppendLine("\nSample 5x5 grid from center (in meters):");
-            int gridSize = 5;
-            int startX = (width / 2) - (gridSize / 2);
-            int startY = (height / 2) - (gridSize / 2);
-
-            for (int y = 0; y < gridSize; y++)
-            {
-                for (int x = 0; x < gridSize; x++)
-                {
-                    float depth = depthMap[startX + x, startY + y];
-                    sb.Append($"{depth:F3}m ");
-                }
-                sb.AppendLine();
-            }
-
-            Debug.Log(sb.ToString());
-        }
+        return gridDepths.ToString();
     }
 }
