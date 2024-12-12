@@ -129,91 +129,141 @@ public class ServerManager : MonoBehaviour
     {
         try
         {
-            Debug.Log($"Starting upload process for timestamp: {request.timestamp}");
+            Debug.Log("Starting file upload process...");
+
+            httpClient.Timeout = TimeSpan.FromMinutes(5);
 
             using (var multipartContent = new MultipartFormDataContent())
             {
-                // Get full file paths
-                string rgbPath = request.GetRgbImagePath();
-                string depthPath = request.GetDepthRawPath();
-                string rgbMetaPath = request.GetRgbMetaPath();
-                string depthMetaPath = request.GetDepthMetaPath();
-
-                // Log all paths for debugging
-                Debug.Log($"RGB Image Path: {rgbPath}");
-                Debug.Log($"Depth Raw Path: {depthPath}");
-                Debug.Log($"RGB Meta Path: {rgbMetaPath}");
-                Debug.Log($"Depth Meta Path: {depthMetaPath}");
-
-                // Add RGB image file
-                if (File.Exists(rgbPath))
+                try
                 {
-                    byte[] rgbFileBytes = File.ReadAllBytes(rgbPath);
-                    var rgbContent = new ByteArrayContent(rgbFileBytes);
-                    multipartContent.Add(rgbContent, "rgb_image", Path.GetFileName(rgbPath));
-                    Debug.Log("Added RGB image to form data");
-                }
-                else
-                {
-                    Debug.LogError($"RGB file not found at: {rgbPath}");
-                    return false;
-                }
-
-                // Add depth image file
-                if (File.Exists(depthPath))
-                {
-                    byte[] depthFileBytes = File.ReadAllBytes(depthPath);
-                    var depthContent = new ByteArrayContent(depthFileBytes);
-                    multipartContent.Add(depthContent, "depth_image", Path.GetFileName(depthPath));
-                    Debug.Log("Added depth image to form data");
-                }
-                else
-                {
-                    Debug.LogError($"Depth file not found at: {depthPath}");
-                    return false;
-                }
-
-                // Add metadata files
-                if (File.Exists(rgbMetaPath) && File.Exists(depthMetaPath))
-                {
-                    string rgbMetaContent = File.ReadAllText(rgbMetaPath);
-                    string depthMetaContent = File.ReadAllText(depthMetaPath);
-
-                    multipartContent.Add(new StringContent(rgbMetaContent), "rgb_meta");
-                    multipartContent.Add(new StringContent(depthMetaContent), "depth_meta");
-                    Debug.Log("Added metadata to form data");
-                }
-                else
-                {
-                    Debug.LogError($"Metadata files not found. RGB Meta: {rgbMetaPath}, Depth Meta: {depthMetaPath}");
-                    return false;
-                }
-
-                // Send request
-                Debug.Log($"Sending files to server: {serverUri}/process");
-                var response = await httpClient.PostAsync($"{serverUri}/process", multipartContent);
-                Debug.Log($"Server responded with status: {response.StatusCode}");
-
-                if (response.IsSuccessStatusCode)
-                {
-                    if (useTestResponse)
+                    // 3. Add RGB image with explicit error handling
+                    string rgbPath = request.GetRgbImagePath();
+                    if (File.Exists(rgbPath))
                     {
-                        var dummyResponse = NutritionTestData.CreateDummyResponse();
-                        DisplayNutritionResults(dummyResponse);
-                        return true;
+                        try
+                        {
+                            byte[] rgbFileBytes = await File.ReadAllBytesAsync(rgbPath);
+                            var rgbContent = new ByteArrayContent(rgbFileBytes);
+                            multipartContent.Add(rgbContent, "rgb_image", Path.GetFileName(rgbPath));
+                            Debug.Log($"Successfully added RGB image ({rgbFileBytes.Length} bytes)");
+                        }
+                        catch (IOException ex)
+                        {
+                            Debug.LogError($"Error reading RGB file: {ex.Message}");
+                            return false;
+                        }
                     }
                     else
                     {
-                        string jsonResponse = await response.Content.ReadAsStringAsync();
-                        var nutritionResponse = JsonUtility.FromJson<NutritionApiResponse>(jsonResponse);
-                        DisplayNutritionResults(nutritionResponse);
-                        return true;
+                        Debug.LogError($"RGB file not found at: {rgbPath}");
+                        return false;
                     }
+
+                    // 4. Add depth image with explicit error handling
+                    if (File.Exists(request.GetDepthRawPath()))
+                    {
+                        try
+                        {
+                            byte[] depthFileBytes = await File.ReadAllBytesAsync(request.GetDepthRawPath());
+                            var depthContent = new ByteArrayContent(depthFileBytes);
+                            multipartContent.Add(depthContent, "depth_image", Path.GetFileName(request.GetDepthRawPath()));
+                            Debug.Log($"Successfully added depth image ({depthFileBytes.Length} bytes)");
+                        }
+                        catch (IOException ex)
+                        {
+                            Debug.LogError($"Error reading depth file: {ex.Message}");
+                            return false;
+                        }
+                    }
+                    else
+                    {
+                        Debug.LogError($"Depth file not found at: {request.GetDepthRawPath()}");
+                        return false;
+                    }
+
+                    // 5. Add metadata files with explicit error handling
+                    try
+                    {
+                        if (File.Exists(request.GetRgbMetaPath()))
+                        {
+                            string rgbMetaContent = await File.ReadAllTextAsync(request.GetRgbMetaPath());
+                            var rgbMetaTextContent = new StringContent(rgbMetaContent);
+                            multipartContent.Add(rgbMetaTextContent, "rgb_meta");
+                            Debug.Log("Added RGB metadata");
+                        }
+
+                        if (File.Exists(request.GetDepthMetaPath()))
+                        {
+                            string depthMetaContent = await File.ReadAllTextAsync(request.GetDepthMetaPath());
+                            var depthMetaTextContent = new StringContent(depthMetaContent);
+                            multipartContent.Add(depthMetaTextContent, "depth_meta");
+                            Debug.Log("Added depth metadata");
+                        }
+                    }
+                    catch (IOException ex)
+                    {
+                        Debug.LogError($"Error reading metadata files: {ex.Message}");
+                        return false;
+                    }
+
+                    // 6. Send request with retry logic
+                    const int maxRetries = 3;
+                    for (int retry = 0; retry < maxRetries; retry++)
+                    {
+                        try
+                        {
+                            Debug.Log($"Sending files to server (attempt {retry + 1}/{maxRetries}): {serverUri}/process");
+
+                            using (var response = await httpClient.PostAsync($"{serverUri}/process", multipartContent))
+                            {
+                                Debug.Log($"Server responded with status: {response.StatusCode}");
+
+                                if (response.IsSuccessStatusCode)
+                                {
+                                    if (useTestResponse)
+                                    {
+                                        Debug.Log("Using test response data");
+                                        var dummyResponse = NutritionTestData.CreateDummyResponse();
+                                        DisplayNutritionResults(dummyResponse);
+                                        return true;
+                                    }
+                                    else
+                                    {
+                                        string jsonResponse = await response.Content.ReadAsStringAsync();
+                                        var nutritionResponse = JsonUtility.FromJson<NutritionApiResponse>(jsonResponse);
+                                        DisplayNutritionResults(nutritionResponse);
+                                        return true;
+                                    }
+                                }
+                                else
+                                {
+                                    string errorContent = await response.Content.ReadAsStringAsync();
+                                    Debug.LogError($"Server returned error {response.StatusCode}: {errorContent}");
+
+                                    // Only retry on specific status codes
+                                    if ((int)response.StatusCode < 500)  // Don't retry on 4xx errors
+                                        return false;
+
+                                    if (retry < maxRetries - 1)
+                                        await Task.Delay(1000 * (retry + 1));  // Exponential backoff
+                                }
+                            }
+                        }
+                        catch (HttpRequestException ex)
+                        {
+                            Debug.LogError($"Network error (attempt {retry + 1}): {ex.Message}");
+                            if (retry < maxRetries - 1)
+                                await Task.Delay(1000 * (retry + 1));
+                        }
+                    }
+
+                    Debug.LogError("Failed to upload after all retry attempts");
+                    return false;
                 }
-                else
+                catch (Exception e)
                 {
-                    string errorContent = await response.Content.ReadAsStringAsync();
-                    Debug.LogError($"Server returned error {response.StatusCode}: {errorContent}");
+                    Debug.LogError($"Error preparing form data: {e.Message}\nStack trace: {e.StackTrace}");
                     return false;
                 }
             }
