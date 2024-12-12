@@ -60,6 +60,7 @@
         public string foodName;
         public float fat;
         public float protein;
+        public float calories;
         public float carbohydrates;
         public float estimatedVolume;
         public string volumeUnit = "cups";
@@ -76,9 +77,10 @@
             {
                 foodName = macroData.requested_food,
                 fat = macroData.macros.fat,
+                calories = macroData.macros.calories,
                 protein = macroData.macros.protein,
                 carbohydrates = macroData.macros.carbs,
-                estimatedVolume = macroData.volume,
+                estimatedVolume = volumeData.volume_cups,
                 calculatedWeight = macroData.calculated_weight
             };
         }

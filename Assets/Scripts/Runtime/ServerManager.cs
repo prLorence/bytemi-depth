@@ -24,7 +24,7 @@ public class ServerManager : MonoBehaviour
     [SerializeField] private bool useTestResponse = false;
 
     private static HttpClient httpClient;
-    private string serverUri = "http://192.168.68.111:5000"; // Default URI
+    private string serverUri = "http://192.168.210.25:5000"; // Default URI
 
     public struct UploadParameters
     {
@@ -115,6 +115,7 @@ public class ServerManager : MonoBehaviour
             sb.AppendLine($"Estimated Volume (EV): {nutritionInfo.estimatedVolume:F2} {nutritionInfo.volumeUnit}");
             sb.AppendLine($"Calculated Weight (from EV): {nutritionInfo.calculatedWeight} {nutritionInfo.weightUnit}");
             sb.AppendLine("Macronutrients:");
+            sb.AppendLine($"  Calories: {nutritionInfo.calories} ");
             sb.AppendLine($"  Protein: {nutritionInfo.protein:F1}g");
             sb.AppendLine($"  Fat: {nutritionInfo.fat:F1}g");
             sb.AppendLine($"  Carbs: {nutritionInfo.carbohydrates:F1}g\n");

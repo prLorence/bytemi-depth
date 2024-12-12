@@ -2209,7 +2209,7 @@ MonoBehaviour:
   m_ImageInfo: {fileID: 901906345}
   m_DepthMaterial: {fileID: 2100000, guid: 1822b099f6c09434b97c31e70184ff72, type: 2}
   m_StencilMaterial: {fileID: 2100000, guid: c0be8d44aefaa41a79f40f503f63619b, type: 2}
-  m_MaxEnvironmentDistance: 0.7
+  m_MaxEnvironmentDistance: 1
   m_MaxHumanDistance: 1
 --- !u!4 &1141330383
 Transform:
@@ -2263,9 +2263,7 @@ MonoBehaviour:
   cancelButton: {fileID: 83502380}
   settingsButton: {fileID: 335185780}
   closeResultsPanelButton: {fileID: 327701708}
-  useTestResponse: 1
-  simulateNetworkDelay: 0
-  simulatedDelay: 1.5
+  useTestResponse: 0
 --- !u!224 &1266926428
 RectTransform:
   m_ObjectHideFlags: 0
